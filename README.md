@@ -1,4 +1,4 @@
-# tf-tcd
+# tcd-tf
 
 ## Set up Tensorflow
 Downgrade Anaconda to use python 3.5. The reason for this are the non-compliance of Tensorflow to Anaconda3.6. For that do:
