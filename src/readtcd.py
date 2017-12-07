@@ -11,15 +11,14 @@ import tensorflow as tf
 import numpy as np
 import io
 from PIL import Image
+import argparse
 
 from object_detection.utils import dataset_util
 
 
 flags = tf.app.flags
-flags.DEFINE_string('output_path', 'miotcd-train.tfrecord', 'Output folder')
 FLAGS = flags.FLAGS
-imdir = os.path.join(HOME, 'temp/miotcd-dataset/MIO-TCD-Localization/train/')
-annotfilepath = os.path.join(HOME, 'temp/miotcd-dataset/MIO-TCD-Localization/gt_train_train.csv')
+
 classes = ['articulated_truck',
 		   'bicycle',
 		   'bus',
@@ -46,7 +45,6 @@ def create_tf_example(imdir, curimid, bboxes):
 
     encoded_image_data = encoded_jpg # Encoded image bytes
     image_format = b'jpg'
-    #input(bboxes['categids'])
 
     tf_example = tf.train.Example(features=tf.train.Features(feature={
         'image/height': dataset_util.int64_feature(height),
@@ -55,10 +53,10 @@ def create_tf_example(imdir, curimid, bboxes):
         'image/source_id': dataset_util.bytes_feature(filename),
         'image/encoded': dataset_util.bytes_feature(encoded_image_data),
         'image/format': dataset_util.bytes_feature(image_format),
-        'image/object/bbox/xmin': dataset_util.float_list_feature(bboxes['xmins']),
-        'image/object/bbox/xmax': dataset_util.float_list_feature(bboxes['xmaxs']),
-        'image/object/bbox/ymin': dataset_util.float_list_feature(bboxes['ymins']),
-        'image/object/bbox/ymax': dataset_util.float_list_feature(bboxes['ymaxs']),
+        'image/object/bbox/xmin': dataset_util.float_list_feature(bboxes['xmins']/width),
+        'image/object/bbox/xmax': dataset_util.float_list_feature(bboxes['xmaxs']/width),
+        'image/object/bbox/ymin': dataset_util.float_list_feature(bboxes['ymins']/height),
+        'image/object/bbox/ymax': dataset_util.float_list_feature(bboxes['ymaxs']/height),
         'image/object/class/text': dataset_util.bytes_list_feature(bboxes['categnames']),
         'image/object/class/label': dataset_util.int64_list_feature(bboxes['categids']),
     }))
@@ -68,36 +66,60 @@ def create_tf_example(imdir, curimid, bboxes):
 def bboxesinit():
     bboxes = {}
     bboxes['categnames'] = []
-    bboxes['xmins'] = []
-    bboxes['ymins'] = []
-    bboxes['xmaxs'] = []
-    bboxes['ymaxs'] = []
+    bboxes['xmins'] = np.array([])
+    bboxes['ymins'] = np.array([])
+    bboxes['xmaxs'] = np.array([])
+    bboxes['ymaxs'] = np.array([])
     bboxes['categids'] = []
     return bboxes
 
 def stack_features(bboxes, categname, xmin, ymin, xmax, ymax):
     bboxes['categnames'].append(categname.encode('utf8'))
-    bboxes['xmins'].append(int(xmin))
-    bboxes['ymins'].append(int(ymin))
-    bboxes['xmaxs'].append(int(xmax))
-    bboxes['ymaxs'].append(int(ymax))
+    bboxes['xmins'] = np.append(bboxes['xmins'], float(xmin))
+    bboxes['ymins'] = np.append(bboxes['ymins'], float(ymin))
+    bboxes['xmaxs'] = np.append(bboxes['xmaxs'], float(xmax))
+    bboxes['ymaxs'] = np.append(bboxes['ymaxs'], float(ymax))
     bboxes['categids'].append(int(classes.index(categname)) + 1)
     return bboxes
 
-def main(_):
-    writer = tf.python_io.TFRecordWriter(FLAGS.output_path)
+def args_ok(args):
+    if not args.input or not args.output or not args.imdir:
+        print('Missing arguments --input --imdir --outdir')
+        return False
+    valid = True
+    if not os.path.exists(args.input):
+        print('Provided CSV "{}" does not exist'.format(args.input))
+        valid = False
+    if not os.path.exists(args.imdir):
+        print('Provided images dir "{}" does not exist'.format(args.imdir))
+        valid = False
+    if os.path.exists(args.output):
+        print('Provided output file "{}" already exists.'.format(args.output))
+        ans = input('Do you want to overwrite it? ')
+        if ans not in ['Y', 'y']: valid = False
+    return valid
+
+def main(argv):
+    parser = argparse.ArgumentParser(description='Generate the tfrecord based on tcd csv format.')
+    parser.add_argument('--input', help='Input CSV output in TCD format')
+    parser.add_argument('--imdir', help='Images directory')
+    parser.add_argument('--output', help='Output TFrecord output')
+    args = parser.parse_args()
+    
+    if not args_ok(args): return
+    writer = tf.python_io.TFRecordWriter(args.output)
 
     bboxes = bboxesinit()
     curimid = '-1'
 
-    annotfh = open(annotfilepath)
+    annotfh = open(args.input)
 
     for line in annotfh:
         imid, categ, xmin, ymin, xmax, ymax = line.split(',')
 
         if imid != curimid: # flush bboxes (we assume the imids column is sorted)
             if curimid != '-1':
-                tf_example = create_tf_example(imdir, curimid, bboxes)
+                tf_example = create_tf_example(args.imdir, curimid, bboxes)
                 writer.write(tf_example.SerializeToString())
                 bboxes = bboxesinit()
             curimid = imid
@@ -105,10 +127,9 @@ def main(_):
         bboxes = stack_features(bboxes, categ, xmin, ymin, xmax, ymax)
 
     annotfh.close()
-    tf_example = create_tf_example(imdir, curimid, bboxes)
+    tf_example = create_tf_example(args.imdir, curimid, bboxes)
     writer.write(tf_example.SerializeToString())
     writer.close()
-
 
 if __name__ == '__main__':
     tf.app.run()
